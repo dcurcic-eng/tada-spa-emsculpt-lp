@@ -332,6 +332,7 @@ h1,h2,h3,h4{margin:0;font-weight:500}
 .form-card .btn{width:100%;justify-content:center;padding:19px 0}
 .reassure{display:flex;flex-direction:column;gap:5px}
 .reassure p:first-child{color:var(--ink-muted);font-size:15px;line-height:1.6}
+.form-err{display:none;margin-bottom:16px;color:var(--coral-text);font-size:14px;line-height:1.5}
 .form-ok{display:none;gap:10px;align-items:flex-start;background:var(--w100);border:1px solid var(--terracotta);border-radius:12px;padding:16px 18px;color:var(--coral-text);font-size:15px;line-height:1.6}
 .form-ok.on{display:flex}
 .form-ok .ic{width:18px;height:18px;margin-top:4px;flex:none}
@@ -1049,8 +1050,8 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
       <h2 class="h-sub">Free consultation + $250 credit.</h2>
       <form id="leadForm" novalidate>
         <div class="f-row" style="margin-bottom:22px">
-          <div class="field"><label for="fn">First name</label><input id="fn" name="first" type="text" placeholder="Jamie" autocomplete="given-name" required></div>
-          <div class="field"><label for="ln">Last name</label><input id="ln" name="last" type="text" placeholder="Barricelli" autocomplete="family-name" required></div>
+          <div class="field"><label for="fn">First name</label><input id="fn" name="first_name" type="text" placeholder="Jamie" autocomplete="given-name" required></div>
+          <div class="field"><label for="ln">Last name</label><input id="ln" name="last_name" type="text" placeholder="Barricelli" autocomplete="family-name" required></div>
         </div>
         <div class="f-row" style="margin-bottom:22px">
           <div class="field"><label for="ph">Phone</label><input id="ph" name="phone" type="tel" placeholder="(910) 000-0000" autocomplete="tel" required></div>
@@ -1058,8 +1059,9 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </div>
         <div class="field" style="margin-bottom:22px">
           <label for="goal">What would you like to improve?</label>
-          <textarea id="goal" name="goal" placeholder="e.g. lower abdomen after two pregnancies, or core strength for running."></textarea>
+          <textarea id="goal" name="message" placeholder="e.g. lower abdomen after two pregnancies, or core strength for running."></textarea>
         </div>
+        <div class="form-err" id="formErr" role="alert" aria-live="polite"></div>
         <button class="btn btn-dark" type="submit">CLAIM MY FREE CONSULT + $250 CREDIT<svg class="ic" aria-hidden="true"><use href="#i-arrow"/></svg></button>
       </form>
       <div class="form-ok" id="formOk"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg><span>Thank you. Your request is with our clinical team and we will reply within one business day.</span></div>
@@ -1337,18 +1339,91 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 (function(){
   var form = document.getElementById('leadForm');
   var ok = document.getElementById('formOk');
-  form.addEventListener('submit', function(e){
+  var errEl = document.getElementById('formErr');
+  var submitBtn = form.querySelector('button[type="submit"]');
+
+  function showError(msg){
+    errEl.textContent = msg;
+    errEl.style.display = msg ? 'block' : 'none';
+  }
+
+  form.addEventListener('submit', async function(e){
     e.preventDefault();
+    showError('');
+
     var invalid = false;
     ['fn','ln','ph','em'].forEach(function(id){
       var el = document.getElementById(id);
       if (!el.value.trim()){ el.style.borderColor = 'var(--coral)'; invalid = true; }
       else el.style.borderColor = '';
     });
-    if (invalid) return;
-    form.style.display = 'none';
-    ok.classList.add('on');
-    if (window.gsap) gsap.from(ok, {y:12, autoAlpha:0, duration:.5, ease:"power2.out", clearProps:"all"});
+    if (invalid){ showError('Please fill in all required fields.'); return; }
+
+    var first_name = document.getElementById('fn').value.trim();
+    var last_name = document.getElementById('ln').value.trim();
+    var email = document.getElementById('em').value.trim();
+    var message = document.getElementById('goal').value.trim();
+    // Accept formatted input like (910) 000-0000 or +1 910 000 0000
+    var phone = document.getElementById('ph').value.replace(/\D/g, '');
+    if (phone.length === 11 && phone.charAt(0) === '1') phone = phone.slice(1);
+
+    if (!/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(email)){
+      document.getElementById('em').style.borderColor = 'var(--coral)';
+      showError('Please enter a valid email address.');
+      return;
+    }
+    if (!/^[0-9]{10}$/.test(phone)){
+      document.getElementById('ph').style.borderColor = 'var(--coral)';
+      showError('Please enter a 10-digit US phone number.');
+      return;
+    }
+
+    submitBtn.disabled = true;
+
+    var fd = new FormData();
+    fd.append('first_name', first_name);
+    fd.append('last_name', last_name);
+    fd.append('phone', '+1' + phone);
+    fd.append('email', email);
+    fd.append('checkbox', '');
+    fd.append('organization', '39d7a179-961d-49f2-a7d0-d229bb70c185');
+    fd.append('form', '638');
+    fd.append('message', message);
+    fd.append('form_location', window.location.href);
+
+    // Detect ad tracking params from URL
+    var urlParams = new URLSearchParams(window.location.search);
+    var trackingMap = { gclid:'google', wbraid:'google', gbraid:'google', fbclid:'meta', ttclid:'tiktok' };
+    var trackingParam = '';
+    var adSource = 'other';
+    for (var param in trackingMap){
+      var val = urlParams.get(param);
+      if (val){ trackingParam = val; adSource = trackingMap[param]; break; }
+    }
+    fd.append('tracking_param', trackingParam);
+    fd.append('ad_source', adSource);
+
+    try {
+      var res = await fetch('https://api.aevadigital.com/api/v1/contacts/add_contact_from_form/', {
+        method: 'POST',
+        body: fd
+      });
+      if (!res.ok){
+        var txt = await res.text().catch(function(){ return res.statusText; });
+        throw new Error(txt || 'Server error');
+      }
+
+      window.dataLayer = window.dataLayer || [];
+      window.dataLayer.push({ 'event': 'form-success' });
+
+      form.style.display = 'none';
+      ok.classList.add('on');
+      if (window.gsap) gsap.from(ok, {y:12, autoAlpha:0, duration:.5, ease:"power2.out", clearProps:"all"});
+    } catch (err){
+      console.error(err);
+      showError('Submission failed. Please try again.');
+      submitBtn.disabled = false;
+    }
   });
 })();
 
